@@ -1,83 +1,110 @@
-<script setup>
-import { computed } from 'vue'
+<template>
+  <div class="w-full p-2">
+    <svg ref="statsSvg" class="w-full" height="110"></svg>
+  </div>
+</template>
 
-// On reçoit les données filtrées actuelles depuis le composant parent
+<script setup>
+import { ref, onMounted, watch, nextTick } from 'vue';
+import * as d3 from 'd3';
+
 const props = defineProps({
-  activeNodes: {
+  nodes: {
     type: Array,
     default: () => []
   }
-})
+});
 
-// Calcul dynamique du nombre d'éléments par type
-const stats = computed(() => {
-  const counts = { Person: 0, Song: 0, RecordLabel: 0, Other: 0 }
-  
-  props.activeNodes.forEach(node => {
-    const type = node['Node Type']
-    if (counts[type] !== undefined) {
-      counts[type]++
-    } else {
-      counts[type]['Other']++
-    }
-  })
-  
-  return counts
-})
+const statsSvg = ref(null);
 
-// Calcul du total pour les pourcentages
-const total = computed(() => props.activeNodes.length)
+const drawStats = async () => {
+  await nextTick();
+  if (!statsSvg.value) return;
+
+  const svg = d3.select(statsSvg.value);
+  
+  // NETTOYAGE CRUCIAL : Supprime tout élément existant pour éviter le gel des barres graphiques
+  svg.selectAll("*").remove();
+
+  // Dimensions et marges de calcul
+  const width = statsSvg.value.clientWidth || 260;
+  const barHeight = 14;
+  const barSpacing = 28;
+  const labelOffset = 110; 
+  const maxBarWidth = width - labelOffset - 35;
+
+  // Extraction et filtrage robuste et insensible à la casse / pluriels
+  const pCount = props.nodes.filter(n => {
+    const t = String(n.type).toLowerCase();
+    return t.includes('person') || t.includes('user');
+  }).length;
+
+  const sCount = props.nodes.filter(n => {
+    const t = String(n.type).toLowerCase();
+    return t.includes('song') || t.includes('chanson');
+  }).length;
+
+  const lCount = props.nodes.filter(n => {
+    const t = String(n.type).toLowerCase();
+    return t.includes('label') || t.includes('record');
+  }).length;
+
+  // Création du modèle de données local
+  const counts = [
+    { label: 'Personnes', count: pCount, color: '#3b82f6' },
+    { label: 'Chansons', count: sCount, color: '#10b981' },
+    { label: 'Labels de Disques', count: lCount, color: '#f43f5e' }
+  ];
+
+  // Définition de l'échelle linéaire dynamique
+  const maxCount = d3.max(counts, d => d.count) || 1;
+  const widthScale = d3.scaleLinear()
+    .domain([0, maxCount])
+    .range([0, maxBarWidth]);
+
+  const chart = svg.append("g").attr("transform", "translate(10, 15)");
+
+  // Construction des lignes du graphique
+  const rows = chart.selectAll("g.row")
+    .data(counts)
+    .join("g")
+    .attr("class", "row")
+    .attr("transform", (d, i) => `translate(0, ${i * barSpacing})`);
+
+  // Rendu du texte descriptif (Label de gauche)
+  rows.append("text")
+    .attr("x", 0)
+    .attr("y", barHeight - 2)
+    .style("font-size", "11px")
+    .style("fill", "#475569")
+    .style("font-weight", "500")
+    .text(d => d.label);
+
+  // Rendu de la barre horizontale réactive
+  rows.append("rect")
+    .attr("x", labelOffset)
+    .attr("y", 0)
+    .attr("width", d => widthScale(d.count))
+    .attr("height", barHeight)
+    .attr("fill", d => d.color)
+    .attr("rx", 3);
+
+  // Rendu de la valeur numérique courante (Compteur de droite)
+  rows.append("text")
+    .attr("x", d => labelOffset + widthScale(d.count) + 8)
+    .attr("y", barHeight - 2)
+    .style("font-size", "11px")
+    .style("font-weight", "bold")
+    .style("fill", "#1e293b")
+    .text(d => d.count);
+};
+
+// Écouteur réactif profond sur la propriété "nodes" pour recalculer au moindre changement
+watch(() => props.nodes, () => {
+  drawStats();
+}, { deep: true, immediate: true });
+
+onMounted(() => {
+  setTimeout(drawStats, 200);
+});
 </script>
-
-<template>
-  <div class="p-4 bg-white rounded-lg h-full">
-    <h3 class="text-sm font-bold text-slate-700 mb-4">Répartition des entités visibles</h3>
-    
-    <div v-if="total === 0" class="text-center py-12 text-xs text-slate-400 font-medium">
-      Aucune donnée à analyser. Cochez des filtres !
-    </div>
-    
-    <div v-else class="space-y-4">
-      <div class="bg-slate-50 p-3 rounded-lg border border-slate-100 text-center">
-        <p class="text-[10px] uppercase tracking-wider font-semibold text-slate-400">Total affiché</p>
-        <p class="text-2xl font-black text-slate-800">{{ total }}</p>
-      </div>
-
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs font-medium text-slate-600">
-          <span class="flex items-center gap-1.5">
-            <span class="w-2.5 h-2.5 rounded-full bg-blue-500"></span> Personnes
-          </span>
-          <span>{{ stats.Person }} ({{ total ? Math.round((stats.Person / total) * 100) : 0 }}%)</span>
-        </div>
-        <div class="w-full bg-slate-100 rounded-full h-2">
-          <div class="bg-blue-500 h-2 rounded-full transition-all duration-500" :style="{ width: `${total ? (stats.Person / total) * 100 : 0}%` }"></div>
-        </div>
-      </div>
-
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs font-medium text-slate-600">
-          <span class="flex items-center gap-1.5">
-            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Chansons
-          </span>
-          <span>{{ stats.Song }} ({{ total ? Math.round((stats.Song / total) * 100) : 0 }}%)</span>
-        </div>
-        <div class="w-full bg-slate-100 rounded-full h-2">
-          <div class="bg-emerald-500 h-2 rounded-full transition-all duration-500" :style="{ width: `${total ? (stats.Song / total) * 100 : 0}%` }"></div>
-        </div>
-      </div>
-
-      <div class="space-y-1">
-        <div class="flex justify-between text-xs font-medium text-slate-600">
-          <span class="flex items-center gap-1.5">
-            <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span> Labels
-          </span>
-          <span>{{ stats.RecordLabel }} ({{ total ? Math.round((stats.RecordLabel / total) * 100) : 0 }}%)</span>
-        </div>
-        <div class="w-full bg-slate-100 rounded-full h-2">
-          <div class="bg-red-500 h-2 rounded-full transition-all duration-500" :style="{ width: `${total ? (stats.RecordLabel / total) * 100 : 0}%` }"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</template>

@@ -3,10 +3,10 @@ import { onMounted, ref, computed, watch } from 'vue'
 import * as d3 from 'd3'
 
 // --- ÉVÉNEMENTS AUTORISÉS (DÉCLARATION COMBINÉE) ---
+// Émet le nœud cliqué vers le composant d'orchestration parent pour synchroniser l'Ego Network
 const emit = defineEmits(['node-click'])
 
 // --- ÉTATS RÉACTIFS VUE ---
-const graphData = ref(null)
 const loading = ref(true)
 const svgRef = ref(null)
 
@@ -14,16 +14,16 @@ const svgRef = ref(null)
 const allNodes = ref([])
 const allLinks = ref([])
 
-// États de filtrage interactifs
+// États de filtrage interactifs (Sidebar embarquée / Contrôles)
 const searchQuery = ref('')
 const filterPerson = ref(true)
 const filterSong = ref(true)
 const filterRecordLabel = ref(true)
 
-// Élément sélectionné au clic (Inspecteur)
+// Élément sélectionné au clic (Inspecteur de preuves de droite)
 const selectedEntity = ref(null)
 
-// Variables D3 globales
+// Variables D3 globales pour la simulation cinétique
 let simulation = null
 let linkSelection = null
 let nodeSelection = null
@@ -35,7 +35,7 @@ const filteredData = computed(() => {
 
   const query = searchQuery.value.trim().toLowerCase()
 
-  // 1. Étape 1 : Filtrage de base selon les Checkboxes
+  // 1. Étape 1 : Filtrage de base selon les Checkboxes (Dimensions T Nodes)
   let baseNodes = allNodes.value.filter(n => {
     if (n['Node Type'] === 'Person' && !filterPerson.value) return false
     if (n['Node Type'] === 'Song' && !filterSong.value) return false
@@ -43,7 +43,7 @@ const filteredData = computed(() => {
     return true
   })
 
-  // 2. Étape 2 : Si une recherche textuelle est active
+  // 2. Étape 2 : Si une recherche textuelle est active (Focus sur un artiste)
   if (query !== '') {
     const searchedNodes = baseNodes.filter(n => n.name && n.name.toLowerCase().includes(query))
     const searchedIds = new Set(searchedNodes.map(n => n.id))
@@ -64,7 +64,7 @@ const filteredData = computed(() => {
     return { nodes: finalNodes, links: connectedLinks }
   }
 
-  // 3. Étape 3 : Si pas de recherche, on affiche un échantillon stable (ex: 250 premiers nœuds)
+  // 3. Étape 3 : Si pas de recherche active, affichage d'un échantillon topologique stable
   const defaultNodes = baseNodes.slice(0, 250)
   const defaultIds = new Set(defaultNodes.map(n => n.id))
   
@@ -77,7 +77,7 @@ const filteredData = computed(() => {
   return { nodes: defaultNodes, links: defaultLinks }
 })
 
-// --- FONCTION DE MISE À JOUR DE LA SIMULATION ---
+// --- FONCTION DE MISE À JOUR DE LA SIMULATION (DIAGRAMME FORCE-DIRECTED) ---
 const updateGraph = () => {
   if (!svgRef.value || !simulation) return
 
@@ -87,20 +87,22 @@ const updateGraph = () => {
   let g = svg.select('g.main-group')
   if (g.empty()) g = svg.append('g').attr('class', 'main-group')
 
+  // Charte chromatique sémantique unifiée (Gestalt : Loi de Similarité)
   const getColor = (type) => {
     switch(type) {
-      case 'Person': return '#3b82f6'
-      case 'Song': return '#10b981'
-      case 'RecordLabel': return '#ef4444'
+      case 'Person': return '#3b82f6'       // Bleu
+      case 'Song': return '#10b981'         // Vert
+      case 'RecordLabel': return '#ef4444'  // Rouge
       default: return '#94a3b8'
     }
   }
 
+  // Injection des structures filtrées dans le moteur physique D3
   simulation.nodes(nodes)
   simulation.force('link').links(links)
   simulation.alpha(0.3).restart()
 
-  // Rendu des lignes (Liens)
+  // Rendu et jointure des lignes (T Links)
   linkSelection = g.selectAll('line')
     .data(links, d => {
       const s = d.source.id || d.source
@@ -113,7 +115,7 @@ const updateGraph = () => {
       exit => exit.remove()
     )
 
-  // Configuration du Drag & Drop
+  // Configuration interactive du Drag & Drop pour la manipulation des nœuds
   const drag = (sim) => {
     function dragstarted(event, d) {
       if (!event.active) sim.alphaTarget(0.2).restart()
@@ -127,7 +129,7 @@ const updateGraph = () => {
     return d3.drag().on('start', dragstarted).on('drag', dragged).on('end', dragended)
   }
 
-  // Rendu des cercles (Nœuds)
+  // Rendu et jointure des cercles (T Nodes)
   nodeSelection = g.selectAll('circle')
     .data(nodes, d => d.id)
     .join(
@@ -140,10 +142,10 @@ const updateGraph = () => {
           .style('cursor', 'grab')
           .call(drag(simulation))
 
-        // Clic configuré pour mettre à jour l'inspecteur ET avertir HomeView / l'Ego Network
+        // Interconnexion réactive : Clic sur le diagramme principal
         circle.on('click', (event, d) => { 
-          selectedEntity.value = d 
-          emit('node-click', d) 
+          selectedEntity.value = d        // Alimente l'inspecteur de métadonnées local
+          emit('node-click', d)           // Émet vers HomeView pour recalculer l'Ego Network
         })
         
         circle.append('title').text(d => `${d.name} (${d['Node Type']})`)
@@ -153,7 +155,7 @@ const updateGraph = () => {
       exit => exit.remove()
     )
 
-  // Rendu des textes d'enquête
+  // Rendu et jointure des étiquettes textuelles (Labels)
   labelSelection = g.selectAll('text')
     .data(nodes, d => d.id)
     .join(
@@ -171,6 +173,7 @@ const updateGraph = () => {
 
 onMounted(async () => {
   try {
+    // Ingestion initiale du graphe de connaissances
     const response = await fetch('/MC1_graph.json')
     const data = await response.json()
     
@@ -183,14 +186,17 @@ onMounted(async () => {
     
     loading.value = false
 
-    const width = 700; const height = 450
+    const width = 700
+    const height = 450
     const svg = d3.select(svgRef.value)
       .attr('width', '100%').attr('height', height).attr('viewBox', [0, 0, width, height])
     
-    svg.call(d3.zoom().scaleExtent([0.2, 5]).on('zoom', (event) => {
+    // Ajout des fonctionnalités globales de Zoom et Pan interactif
+    svg.call(d3.zoom().scaleExtent([0.1, 8]).on('zoom', (event) => {
       svg.select('g.main-group').attr('transform', event.transform)
     }))
 
+    // Configuration des contraintes et forces du modèle de réseau spatialisé
     simulation = d3.forceSimulation()
       .force('link', d3.forceLink().id(d => d.id).distance(55))
       .force('charge', d3.forceManyBody().strength(-90))
@@ -198,6 +204,7 @@ onMounted(async () => {
       .force('x', d3.forceX(width / 2).strength(0.12))
       .force('y', d3.forceY(height / 2).strength(0.12))
 
+    // Rafraîchissement cinétique des coordonnées à chaque itération physique (Tick)
     simulation.on('tick', () => {
       if (linkSelection) {
         linkSelection.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
@@ -209,6 +216,7 @@ onMounted(async () => {
 
     updateGraph()
 
+    // Boucle de rétroaction : écoute des modifications de filtres pour reconstruire le réseau
     watch([filterPerson, filterSong, filterRecordLabel, searchQuery], () => {
       updateGraph()
     })
@@ -218,6 +226,7 @@ onMounted(async () => {
   }
 })
 
+// Variables calculées pour le panneau de statistiques (Filter Feedback Loop)
 const countPersons = computed(() => filteredData.value.nodes.filter(n => n['Node Type'] === 'Person').length)
 const countSongs = computed(() => filteredData.value.nodes.filter(n => n['Node Type'] === 'Song').length)
 const countLabels = computed(() => filteredData.value.nodes.filter(n => n['Node Type'] === 'RecordLabel').length)
@@ -354,7 +363,7 @@ const countLabels = computed(() => filteredData.value.nodes.filter(n => n['Node 
 
         <div v-else class="text-center py-12 text-slate-400 flex flex-col items-center justify-center h-full">
           <span class="text-2xl mb-1">🕵️‍♂️</span>
-          <p class="text-xs max-w-[180px]">Cliquez sur un suspect ou un morceau pour retracer son parcours d'influence.</p>
+          <p class="text-xs max-w-[180px]">Cliquez sur un suspect ou un morceau pour retracer son parcours d'influence et peupler l'Ego Network.</p>
         </div>
       </div>
 
